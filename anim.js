@@ -64,35 +64,54 @@
     c.addEventListener("mouseleave", function () { c.style.transform = ""; });
   });
 
-  // Hero: drifting "virus" particles linked by lines, reacting to the mouse
-  var hero = document.querySelector(".hero"); if (!hero) return;
-  var cv = document.createElement("canvas"); hero.insertBefore(cv, hero.firstChild);
-  var ctx = cv.getContext("2d"), W, H, pts = [], mouse = { x: -999, y: -999 }, running = true;
-  function size() {
-    W = cv.width = hero.offsetWidth; H = cv.height = hero.offsetHeight;
-    var n = Math.min(90, Math.round(W * H / 14000)); pts = [];
-    for (var k = 0; k < n; k++) pts.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * .5, vy: (Math.random() - .5) * .5, r: 2 + Math.random() * 3 });
+  // Hero title: made of particles that assemble, dissolve into dust and re-form (click or hover to scatter)
+  var hero = document.querySelector(".hero"), h1 = hero && hero.querySelector("h1"); if (!h1) return;
+  var bl = document.createElement("div"); bl.className = "blob"; hero.insertBefore(bl, hero.firstChild);
+  var cv = document.createElement("canvas"); cv.className = "title-canvas"; h1.parentNode.insertBefore(cv, h1);
+  h1.classList.add("sr-only");
+  var ctx = cv.getContext("2d"), W, H, P = [], mouse = { x: -999, y: -999 }, mode = "in", modeT = 0, last = 0;
+  var label = h1.textContent.trim();
+
+  function build() {
+    W = cv.width = Math.min(hero.clientWidth - 32, 1200);
+    var fs = Math.min(W / (label.length * 0.62), 200); H = cv.height = Math.round(fs * 1.25);
+    var o = document.createElement("canvas"); o.width = W; o.height = H; var c = o.getContext("2d");
+    c.font = "900 " + fs + "px 'Segoe UI', Helvetica, Arial, sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
+    if ("letterSpacing" in c) c.letterSpacing = fs * 0.04 + "px";
+    c.fillStyle = "#fff"; c.fillText(label, W / 2, H / 2 + fs * 0.04);
+    var d = c.getImageData(0, 0, W, H).data, step = Math.max(2, Math.round(fs / 55)); P = [];
+    for (var y = 0; y < H; y += step) for (var x = 0; x < W; x += step)
+      if (d[(y * W + x) * 4 + 3] > 128) P.push({ hx: x, hy: y, x: Math.random() * W, y: Math.random() * H, vx: 0, vy: 0, s: step * 1.05, tint: Math.random() < .25 });
+    mode = "in"; modeT = 0;
   }
-  size(); window.addEventListener("resize", size);
-  hero.addEventListener("mousemove", function (e) { var r = hero.getBoundingClientRect(); mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; });
-  hero.addEventListener("mouseleave", function () { mouse.x = mouse.y = -999; });
-  new IntersectionObserver(function (e) { running = e[0].isIntersecting && hero.offsetParent !== null; if (running) loop(); }).observe(hero);
-  function loop() {
+  function scatter(power) { P.forEach(function (p) { var a = Math.random() * 6.283, v = (0.4 + Math.random()) * power; p.vx = Math.cos(a) * v; p.vy = Math.sin(a) * v - power * .25; }); }
+  function setMode(m) { mode = m; modeT = 0; if (m === "dissolve") scatter(7); }
+  build(); window.addEventListener("resize", build);
+  cv.addEventListener("mousemove", function (e) { var r = cv.getBoundingClientRect(); mouse.x = (e.clientX - r.left) * W / r.width; mouse.y = (e.clientY - r.top) * H / r.height; });
+  cv.addEventListener("mouseleave", function () { mouse.x = mouse.y = -999; });
+  cv.addEventListener("click", function () { if (mode === "hold") setMode("dissolve"); });
+
+  var running = true;
+  new IntersectionObserver(function (e) { var was = running; running = e[0].isIntersecting && hero.offsetParent !== null; if (running && !was) requestAnimationFrame(loop); }).observe(hero);
+  function loop(t) {
     if (!running) return;
+    var dt = Math.min(0.05, (t - last) / 1000 || 0.016); last = t; modeT += dt;
+    if (mode === "in" && modeT > 2.2) setMode("hold");
+    else if (mode === "hold" && modeT > 7) setMode("dissolve");
+    else if (mode === "dissolve" && modeT > 1.3) setMode("in");
+    var k = mode === "dissolve" ? 0 : (mode === "in" ? 0.045 : 0.09), fr = mode === "dissolve" ? 0.97 : 0.84;
     ctx.clearRect(0, 0, W, H);
-    pts.forEach(function (p, i) {
-      var dx = p.x - mouse.x, dy = p.y - mouse.y, d = Math.sqrt(dx * dx + dy * dy);
-      if (d < 120) { p.x += dx / d * 1.5; p.y += dy / d * 1.5; }
-      p.x += p.vx; p.y += p.vy;
-      if (p.x < 0 || p.x > W) p.vx *= -1; if (p.y < 0 || p.y > H) p.vy *= -1;
-      for (var j = i + 1; j < pts.length; j++) {
-        var q = pts[j], l = Math.hypot(p.x - q.x, p.y - q.y);
-        if (l < 130) { ctx.strokeStyle = "rgba(127,214,222," + (1 - l / 130) * .4 + ")"; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke(); }
-      }
-      ctx.fillStyle = "rgba(127,214,222,.75)"; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
-      ctx.strokeStyle = "rgba(127,214,222,.35)"; ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 3, 0, 6.283); ctx.stroke();
-    });
+    for (var i = 0; i < P.length; i++) {
+      var p = P[i];
+      if (mode === "dissolve") { p.vy -= 0.03; p.vx += 0.05; } // dust drifts up and to the side
+      else { p.vx += (p.hx - p.x) * k; p.vy += (p.hy - p.y) * k; }
+      var dx = p.x - mouse.x, dy = p.y - mouse.y, d2 = dx * dx + dy * dy;
+      if (d2 < 6400) { var d = Math.sqrt(d2) || 1, f = (80 - d) / 80 * 3; p.vx += dx / d * f; p.vy += dy / d * f; }
+      p.vx *= fr; p.vy *= fr; p.x += p.vx; p.y += p.vy;
+      ctx.fillStyle = p.tint ? "rgba(127,214,222,.95)" : "rgba(255,255,255,.95)";
+      ctx.fillRect(p.x, p.y, p.s, p.s);
+    }
     requestAnimationFrame(loop);
   }
-  loop();
+  requestAnimationFrame(loop);
 })();
